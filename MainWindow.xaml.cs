@@ -1,10 +1,14 @@
 ﻿using Microsoft.ML.OnnxRuntime;
+using Microsoft.ML.OnnxRuntime.Tensors;
 using Microsoft.Win32;
 using Microsoft.Windows.AI.MachineLearning;
 using Microsoft.Windows.AppNotifications;
 using Microsoft.Windows.AppNotifications.Builder;
+using System;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.IO;
+using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
@@ -14,6 +18,11 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
+using System.Xml.Linq;
+using Windows.Graphics.Imaging;
+using Windows.Media;
+using Windows.Storage;
+using Windows.Storage.Streams;
 using IOPath = System.IO.Path;
 
 namespace WinMLLabDemo
@@ -24,8 +33,11 @@ namespace WinMLLabDemo
     public partial class MainWindow : Window
     {
         private OrtEnv _ortEnv;
-        public ObservableCollection<ExecutionProvider> ExecutionProviders { get; set; }
+        public ObservableCollection<OrtEpDevice> ExecutionProviders { get; set; }
         private string selectedImagePath = string.Empty;
+        private OrtEpDevice? selectedExecutionProvider = null;
+        private const string ModelName = "SqueezeNet";
+        private const string ModelExtension = ".onnx";
 
         public MainWindow()
         {
@@ -41,11 +53,65 @@ namespace WinMLLabDemo
             // Pass the options by reference to CreateInstanceWithOptions
             _ortEnv = OrtEnv.CreateInstanceWithOptions(ref envOptions);
 
-            ExecutionProviders = new ObservableCollection<ExecutionProvider>();
+            ExecutionProviders = new ObservableCollection<OrtEpDevice>();
             ExecutionProvidersGrid.ItemsSource = ExecutionProviders;
+            
+            // Set up EP selection event
+            ExecutionProvidersGrid.SelectionChanged += ExecutionProvidersGrid_SelectionChanged;
             
             // Initialize with some sample data
             LoadExecutionProviders();
+            WriteToConsole("WinML Demo Application initialized.");
+        }
+
+        private void ExecutionProvidersGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (ExecutionProvidersGrid.SelectedItem is OrtEpDevice selectedEP)
+            {
+                selectedExecutionProvider = selectedEP;
+                WriteToConsole($"Selected execution provider: {selectedEP.EpName}");
+                
+                // Enable Compile Model button
+                CompileModelButton.IsEnabled = true;
+                
+                // Check if compiled model exists and enable/disable Run button accordingly
+                UpdateRunButtonState();
+            }
+            else
+            {
+                selectedExecutionProvider = null;
+                CompileModelButton.IsEnabled = false;
+                RunButton.IsEnabled = false;
+            }
+        }
+
+        private void UpdateRunButtonState()
+        {
+            if (selectedExecutionProvider != null)
+            {
+                string compiledModelPath = GetCompiledModelPath(selectedExecutionProvider);
+                RunButton.IsEnabled = File.Exists(compiledModelPath);
+                
+                if (RunButton.IsEnabled)
+                {
+                    WriteToConsole($"Compiled model found: {IOPath.GetFileName(compiledModelPath)}");
+                }
+                else
+                {
+                    WriteToConsole($"Compiled model not found: {compiledModelPath}");
+                }
+            }
+            else
+            {
+                RunButton.IsEnabled = false;
+            }
+        }
+
+        private string GetCompiledModelPath(OrtEpDevice ep)
+        {
+            string baseDirectory = AppDomain.CurrentDomain.BaseDirectory;
+            string compiledModelName = $"{ep.EpName}.{ModelName}{ModelExtension}";
+            return IOPath.Combine(baseDirectory, compiledModelName);
         }
 
         private void LoadExecutionProviders()
@@ -57,7 +123,7 @@ namespace WinMLLabDemo
 
             foreach (var ep in eps)
             {
-                ExecutionProviders.Add(new ExecutionProvider(ep.EpName, ep.EpVendor, ep.HardwareDevice.Type.ToString()));
+                ExecutionProviders.Add(ep);
             }
 
             WriteToConsole("Loaded execution providers.");
@@ -66,6 +132,10 @@ namespace WinMLLabDemo
         private void RefreshEPButton_Click(object sender, RoutedEventArgs e)
         {
             LoadExecutionProviders();
+            // Reset selection state
+            selectedExecutionProvider = null;
+            CompileModelButton.IsEnabled = false;
+            RunButton.IsEnabled = false;
         }
 
         private async void InitializeWinMLEPsButton_Click(object sender, RoutedEventArgs e)
@@ -92,6 +162,102 @@ namespace WinMLLabDemo
             {
                 InitializeWinMLEPsButton.IsEnabled = true;
             }
+        }
+
+        private async void CompileModelButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (selectedExecutionProvider == null)
+            {
+                WriteToConsole("No execution provider selected.");
+                return;
+            }
+
+            CompileModelButton.IsEnabled = false;
+            try
+            {
+                WriteToConsole($"Compiling model for {selectedExecutionProvider.EpName}...");
+                var now = DateTime.Now;
+
+                string compiledModelPath = await Task.Run(() => CompileModelForExecutionProvider(selectedExecutionProvider));
+
+                var elapsed = DateTime.Now - now;
+                WriteToConsole($"Model compiled successfully in {elapsed.TotalMilliseconds} ms: {compiledModelPath}");
+                
+                // Update Run button state
+                UpdateRunButtonState();
+            }
+            catch (Exception ex)
+            {
+                WriteToConsole($"Error compiling model: {ex.Message}");
+            }
+            finally
+            {
+                CompileModelButton.IsEnabled = true;
+            }
+        }
+
+        private SessionOptions GetSessionOptions(OrtEpDevice executionProvider)
+        {
+            // Create a session
+            var sessionOptions = new SessionOptions();
+
+            Dictionary<string, string> epOptions = new(StringComparer.OrdinalIgnoreCase);
+
+            switch (executionProvider.EpName)
+            {
+                case "VitisAIExecutionProvider":
+                    sessionOptions.AppendExecutionProvider(_ortEnv, [executionProvider], epOptions);
+                    break;
+
+                case "OpenVINOExecutionProvider":
+                    // Configure threading for OpenVINO EP
+                    epOptions["num_of_threads"] = "4";
+                    sessionOptions.AppendExecutionProvider(_ortEnv, [executionProvider], epOptions);
+                    break;
+
+                case "QNNExecutionProvider":
+                    // Configure performance mode for QNN EP
+                    epOptions["htp_performance_mode"] = "high_performance";
+                    sessionOptions.AppendExecutionProvider(_ortEnv, [executionProvider], epOptions);
+                    break;
+
+                case "NvTensorRTRTXExecutionProvider":
+                    // Configure performance mode for TensorRT RTX EP
+                    sessionOptions.AppendExecutionProvider(_ortEnv, [executionProvider], epOptions);
+                    break;
+
+                default:
+                    break;
+            }
+
+            return sessionOptions;
+        }
+
+        private string CompileModelForExecutionProvider(OrtEpDevice executionProvider)
+        {
+            string baseModelPath = IOPath.Combine(AppDomain.CurrentDomain.BaseDirectory, $"{ModelName}{ModelExtension}");
+            string compiledModelPath = GetCompiledModelPath(executionProvider);
+
+            try
+            {
+                var sessionOptions = GetSessionOptions(executionProvider);
+
+                // Create compilation options from session options
+                OrtModelCompilationOptions compileOptions = new(sessionOptions);
+
+                // Set input and output model paths
+                compileOptions.SetInputModelPath(baseModelPath);
+                compileOptions.SetOutputModelPath(compiledModelPath);
+
+                // Compile the model
+                compileOptions.CompileModel();
+            }
+            catch
+            {
+                throw new Exception($"Failed to create session with execution provider: {executionProvider.EpName}");
+            }
+            
+            return compiledModelPath;
         }
 
         private void BrowseImageButton_Click(object sender, RoutedEventArgs e)
@@ -127,7 +293,7 @@ namespace WinMLLabDemo
             }
         }
 
-        private void RunButton_Click(object sender, RoutedEventArgs e)
+        private async void RunButton_Click(object sender, RoutedEventArgs e)
         {
             if (string.IsNullOrEmpty(selectedImagePath))
             {
@@ -135,12 +301,61 @@ namespace WinMLLabDemo
                 return;
             }
 
+            if (selectedExecutionProvider == null)
+            {
+                WriteToConsole("Please select an execution provider first.");
+                return;
+            }
+
+            string compiledModelPath = GetCompiledModelPath(selectedExecutionProvider);
+            if (!File.Exists(compiledModelPath))
+            {
+                WriteToConsole("Compiled model not found. Please compile the model first.");
+                return;
+            }
+
             WriteToConsole($"Running classification on: {IOPath.GetFileName(selectedImagePath)}");
+            WriteToConsole($"Using execution provider: {selectedExecutionProvider.EpName}");
+            WriteToConsole($"Using compiled model: {IOPath.GetFileName(compiledModelPath)}");
             
-            // TODO: Implement actual WinML inference
-            ResultsTextBlock.Text = "Classification results will appear here after WinML integration is implemented.";
+            // Disable the button during inference
+            RunButton.IsEnabled = false;
             
-            WriteToConsole("Classification completed (placeholder).");
+            try
+            {
+                ResultsTextBlock.Text = "Running classification ...";
+                DateTime start = DateTime.Now;
+                var results = await Task.Run(() => RunModelAsync(selectedImagePath, compiledModelPath, selectedExecutionProvider));
+                ResultsTextBlock.Text = results;
+                var time = DateTime.Now - start;
+                WriteToConsole($"Classification completed successfully in {time.TotalMilliseconds} ms.");
+            }
+            catch (Exception ex)
+            {
+                WriteToConsole($"Error during classification: {ex.Message}");
+                ResultsTextBlock.Text = $"Error during classification: {ex.Message}";
+            }
+            finally
+            {
+                // Re-enable the button
+                RunButton.IsEnabled = true;
+            }
+        }
+
+        private async Task<string> RunModelAsync(string imagePath, string compiledModelPath, OrtEpDevice executionProvider)
+        {
+            var sessionOptions = GetSessionOptions(executionProvider);
+
+            using var session = new InferenceSession(compiledModelPath, sessionOptions);
+
+            Console.WriteLine("Preparing input ...");
+            var inputs = await ModelHelpers.BindInputs(imagePath, session);
+
+            Console.WriteLine("Running inference ...");
+            using var results = session.Run(inputs);
+
+            // Format the results
+            return ModelHelpers.FormatResults(results, session);
         }
 
         private void ClearConsoleButton_Click(object sender, RoutedEventArgs e)
@@ -163,57 +378,6 @@ namespace WinMLLabDemo
                     scrollViewer.ScrollToEnd();
                 }
             });
-        }
-    }
-
-    public class ExecutionProvider : INotifyPropertyChanged
-    {
-        private string _name = string.Empty;
-        private string _vendor = string.Empty;
-        private string _deviceType = string.Empty;
-
-        public string Name
-        {
-            get => _name;
-            set
-            {
-                _name = value;
-                OnPropertyChanged(nameof(Name));
-            }
-        }
-
-        public string Vendor
-        {
-            get => _vendor;
-            set
-            {
-                _vendor = value;
-                OnPropertyChanged(nameof(Vendor));
-            }
-        }
-
-        public string DeviceType
-        {
-            get => _deviceType;
-            set
-            {
-                _deviceType = value;
-                OnPropertyChanged(nameof(DeviceType));
-            }
-        }
-
-        public ExecutionProvider(string name, string vendor, string deviceType)
-        {
-            Name = name;
-            Vendor = vendor;
-            DeviceType = deviceType;
-        }
-
-        public event PropertyChangedEventHandler? PropertyChanged;
-
-        protected virtual void OnPropertyChanged(string propertyName)
-        {
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
         }
     }
 }

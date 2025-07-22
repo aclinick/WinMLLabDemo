@@ -47,9 +47,9 @@
                               GridLinesVisibility="All"
                               HeadersVisibility="Column">
                         <DataGrid.Columns>
-                            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*"/>
-                            <DataGridTextColumn Header="Vendor" Binding="{Binding Vendor}" Width="*"/>
-                            <DataGridTextColumn Header="Device Type" Binding="{Binding DeviceType}" Width="*"/>
+                            <DataGridTextColumn Header="Name" Binding="{Binding EpName}" Width="*"/>
+                            <DataGridTextColumn Header="Vendor" Binding="{Binding EpVendor}" Width="*"/>
+                            <DataGridTextColumn Header="Device Type" Binding="{Binding HardwareDevice.Type}" Width="*"/>
                         </DataGrid.Columns>
                     </DataGrid>
                 </Grid>
@@ -86,11 +86,25 @@
                         <Image x:Name="SelectedImage" Stretch="Uniform"/>
                     </Border>
                     
-                    <!-- Run button -->
-                    <Button x:Name="RunButton" Grid.Row="2"
-                            Content="Run Classification" Height="35" 
-                            FontWeight="Bold" Margin="0,0,0,10"
-                            Click="RunButton_Click"/>
+                    <!-- Compile and Run buttons -->
+                    <Grid Grid.Row="2" Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        
+                        <Button x:Name="CompileModelButton" Grid.Column="0"
+                                Content="Compile Model" Height="35" 
+                                FontWeight="Bold" Margin="0,0,5,0"
+                                IsEnabled="False"
+                                Click="CompileModelButton_Click"/>
+                        
+                        <Button x:Name="RunButton" Grid.Column="1"
+                                Content="Run Classification" Height="35" 
+                                FontWeight="Bold" Margin="5,0,0,0"
+                                IsEnabled="False"
+                                Click="RunButton_Click"/>
+                    </Grid>
                     
                     <!-- Classification results -->
                     <GroupBox Grid.Row="3" Header="Classification Results">
