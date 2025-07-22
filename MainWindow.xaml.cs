@@ -62,6 +62,9 @@ namespace WinMLLabDemo
             // Initialize with some sample data
             LoadExecutionProviders();
             WriteToConsole("WinML Demo Application initialized.");
+
+            // Select the default image
+            SelectImage(IOPath.Combine(AppDomain.CurrentDomain.BaseDirectory, "image.jpg"));
         }
 
         private void ExecutionProvidersGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -288,25 +291,30 @@ namespace WinMLLabDemo
 
             if (openFileDialog.ShowDialog() == true)
             {
-                selectedImagePath = openFileDialog.FileName;
-                ImagePathTextBox.Text = selectedImagePath;
-                
-                try
-                {
-                    // Load and display the selected image
-                    var bitmap = new BitmapImage();
-                    bitmap.BeginInit();
-                    bitmap.UriSource = new Uri(selectedImagePath);
-                    bitmap.DecodePixelWidth = 300; // Limit size for preview
-                    bitmap.EndInit();
-                    SelectedImage.Source = bitmap;
-                    
-                    WriteToConsole($"Selected image: {IOPath.GetFileName(selectedImagePath)}");
-                }
-                catch (Exception ex)
-                {
-                    WriteToConsole($"Error loading image: {ex.Message}");
-                }
+                SelectImage(openFileDialog.FileName);
+            }
+        }
+
+        private void SelectImage(string filePath)
+        {
+            selectedImagePath = filePath;
+            ImagePathTextBox.Text = selectedImagePath;
+
+            try
+            {
+                // Load and display the selected image
+                var bitmap = new BitmapImage();
+                bitmap.BeginInit();
+                bitmap.UriSource = new Uri(selectedImagePath);
+                bitmap.DecodePixelWidth = 300; // Limit size for preview
+                bitmap.EndInit();
+                SelectedImage.Source = bitmap;
+
+                WriteToConsole($"Selected image: {IOPath.GetFileName(selectedImagePath)}");
+            }
+            catch (Exception ex)
+            {
+                WriteToConsole($"Error loading image: {ex.Message}");
             }
         }
 
