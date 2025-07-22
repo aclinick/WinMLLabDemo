@@ -17,6 +17,7 @@ using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Media.TextFormatting;
 using System.Windows.Navigation;
 using System.Xml.Linq;
 using Windows.Graphics.Imaging;
@@ -72,46 +73,43 @@ namespace WinMLLabDemo
             if (ExecutionProvidersGrid.SelectedItem is OrtEpDevice selectedEP)
             {
                 selectedExecutionProvider = selectedEP;
+                _loadedSession = null;
                 WriteToConsole($"Selected execution provider: {selectedEP.EpName}");
-                
-                // Enable Compile Model button
-                CompileModelButton.IsEnabled = true;
-                
-                // Check if compiled model exists and enable/disable Run button accordingly
-                UpdateRunButtonState();
             }
             else
             {
                 selectedExecutionProvider = null;
-                CompileModelButton.IsEnabled = false;
-                RunButton.IsEnabled = false;
+                _loadedSession = null;
             }
+
+            // Update button states
+            UpdateButtonStates();
         }
 
-        private void UpdateRunButtonState()
+        private void UpdateButtonStates()
         {
-            if (selectedExecutionProvider != null)
+            if (selectedExecutionProvider == null)
             {
-                string compiledModelPath = GetCompiledModelPath(selectedExecutionProvider);
-                RunButton.IsEnabled = File.Exists(compiledModelPath);
-                
-                if (RunButton.IsEnabled)
-                {
-                    WriteToConsole($"Compiled model found: {IOPath.GetFileName(compiledModelPath)}");
-                }
-                else
-                {
-                    WriteToConsole($"Compiled model not found: {compiledModelPath}");
-                }
-            }
-            else
-            {
+                CompileModelButton.IsEnabled = false;
+                LoadModelButton.IsEnabled = false;
                 RunButton.IsEnabled = false;
             }
+
+            CompileModelButton.IsEnabled = true;
+
+            string compiledModelPath = GetCompiledModelPath(selectedExecutionProvider!);
+            LoadModelButton.IsEnabled = File.Exists(compiledModelPath);
+
+            RunButton.IsEnabled = _loadedSession != null;
         }
 
         private string GetCompiledModelPath(OrtEpDevice ep)
         {
+            if (ep == null)
+            {
+                return "";
+            }
+
             string baseDirectory = AppDomain.CurrentDomain.BaseDirectory;
 
             // CPU and DML don't need to be compiled
@@ -146,6 +144,7 @@ namespace WinMLLabDemo
             LoadExecutionProviders();
             // Reset selection state
             selectedExecutionProvider = null;
+            _loadedSession = null;
             CompileModelButton.IsEnabled = false;
             RunButton.IsEnabled = false;
         }
@@ -204,7 +203,7 @@ namespace WinMLLabDemo
                 WriteToConsole($"Model compiled successfully in {elapsed.TotalMilliseconds} ms: {compiledModelPath}");
                 
                 // Update Run button state
-                UpdateRunButtonState();
+                UpdateButtonStates();
             }
             catch (Exception ex)
             {
@@ -343,7 +342,9 @@ namespace WinMLLabDemo
             WriteToConsole($"Using execution provider: {selectedExecutionProvider.EpName}");
             WriteToConsole($"Using compiled model: {IOPath.GetFileName(compiledModelPath)}");
             
-            // Disable the button during inference
+            // Disable all buttons during inference
+            CompileModelButton.IsEnabled = false;
+            LoadModelButton.IsEnabled = false;
             RunButton.IsEnabled = false;
             
             try
@@ -363,15 +364,23 @@ namespace WinMLLabDemo
             finally
             {
                 // Re-enable the button
+                CompileModelButton.IsEnabled = true;
+                LoadModelButton.IsEnabled = true;
                 RunButton.IsEnabled = true;
             }
         }
 
-        private async Task<string> RunModelAsync(string imagePath, string compiledModelPath, OrtEpDevice executionProvider)
+        private InferenceSession? _loadedSession;
+
+        private async Task<InferenceSession> LoadModel(string compiledModelPath, OrtEpDevice executionProvider)
         {
             var sessionOptions = GetSessionOptions(executionProvider);
+            return new InferenceSession(compiledModelPath, sessionOptions);
+        }
 
-            using var session = new InferenceSession(compiledModelPath, sessionOptions);
+        private async Task<string> RunModelAsync(string imagePath, string compiledModelPath, OrtEpDevice executionProvider)
+        {
+            var session = _loadedSession;
 
             Console.WriteLine("Preparing input ...");
             var inputs = await ModelHelpers.BindInputs(imagePath, session);
@@ -403,6 +412,36 @@ namespace WinMLLabDemo
                     scrollViewer.ScrollToEnd();
                 }
             });
+        }
+
+        private async void LoadModelButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (selectedExecutionProvider == null)
+            { 
+                WriteToConsole("Please select an execution provider first.");
+                return;
+            }
+
+            var path = GetCompiledModelPath(selectedExecutionProvider);
+            if (!File.Exists(path))
+            {
+                WriteToConsole($"Compiled model not found: {path}");
+                return;
+            }
+
+            try
+            {
+                WriteToConsole($"Loading model for execution provider: {selectedExecutionProvider.EpName}");
+                DateTime start = DateTime.Now;
+                _loadedSession = await Task.Run(() => LoadModel(GetCompiledModelPath(selectedExecutionProvider), selectedExecutionProvider));
+                var elapsed = DateTime.Now - start;
+                WriteToConsole($"Model loaded successfully in {elapsed.TotalMilliseconds} ms.");
+                RunButton.IsEnabled = true;
+            }
+            catch (Exception ex)
+            {
+                WriteToConsole($"Error loading model: {ex.Message}");
+            }
         }
     }
 }
