@@ -110,6 +110,15 @@ namespace WinMLLabDemo
         private string GetCompiledModelPath(OrtEpDevice ep)
         {
             string baseDirectory = AppDomain.CurrentDomain.BaseDirectory;
+
+            // CPU and DML don't need to be compiled
+            switch (ep.EpName)
+            {
+                case "CPUExecutionProvider":
+                case "DmlExecutionProvider":
+                    return IOPath.Combine(baseDirectory, $"{ModelName}{ModelExtension}");
+            }
+
             string compiledModelName = $"{ep.EpName}.{ModelName}{ModelExtension}";
             return IOPath.Combine(baseDirectory, compiledModelName);
         }
@@ -170,6 +179,14 @@ namespace WinMLLabDemo
             {
                 WriteToConsole("No execution provider selected.");
                 return;
+            }
+
+            switch (selectedExecutionProvider.EpName)
+            {
+                case "CPUExecutionProvider":
+                case "DmlExecutionProvider":
+                    WriteToConsole("Compiling isn't necessary for CPU or DML EPs");
+                    return;
             }
 
             CompileModelButton.IsEnabled = false;
