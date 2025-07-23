@@ -17,6 +17,9 @@ namespace WinMLLabDemo
 {
     internal static class ModelHelpers
     {
+        private const string ModelName = "SqueezeNet";
+        private const string ModelExtension = ".onnx";
+
         public static string FormatResults(IDisposableReadOnlyCollection<DisposableNamedOnnxValue> results, InferenceSession session)
         {
             // Extract output tensor
@@ -191,6 +194,27 @@ namespace WinMLLabDemo
 
             stream.Dispose();
             return resized;
+        }
+
+        public static string GetCompiledModelPath(OrtEpDevice ep)
+        {
+            if (ep == null)
+            {
+                return "";
+            }
+
+            string baseDirectory = AppDomain.CurrentDomain.BaseDirectory;
+
+            // CPU and DML don't need to be compiled
+            switch (ep.EpName)
+            {
+                case "CPUExecutionProvider":
+                case "DmlExecutionProvider":
+                    return IOPath.Combine(baseDirectory, $"{ModelName}{ModelExtension}");
+            }
+
+            string compiledModelName = $"{ep.EpName}.{ModelName}{ModelExtension}";
+            return IOPath.Combine(baseDirectory, compiledModelName);
         }
     }
 }

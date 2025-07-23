@@ -33,7 +33,7 @@ namespace WinMLLabDemo
     /// </summary>
     public partial class MainWindow : Window
     {
-        private OrtEnv _ortEnv;
+        private InferenceSession? _loadedSession;
         public ObservableCollection<OrtEpDevice> ExecutionProviders { get; set; }
         private string selectedImagePath = string.Empty;
         private OrtEpDevice? selectedExecutionProvider = null;
@@ -43,16 +43,6 @@ namespace WinMLLabDemo
         public MainWindow()
         {
             InitializeComponent();
-
-            // Create a new instance of EnvironmentCreationOptions
-            EnvironmentCreationOptions envOptions = new()
-            {
-                logId = "WinMLLabDemo",
-                logLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_WARNING
-            };
-
-            // Pass the options by reference to CreateInstanceWithOptions
-            _ortEnv = OrtEnv.CreateInstanceWithOptions(ref envOptions);
 
             ExecutionProviders = new ObservableCollection<OrtEpDevice>();
             ExecutionProvidersGrid.ItemsSource = ExecutionProviders;
@@ -66,6 +56,20 @@ namespace WinMLLabDemo
 
             // Select the default image
             SelectImage(IOPath.Combine(AppDomain.CurrentDomain.BaseDirectory, "image.jpg"));
+        }
+
+        private void LoadExecutionProviders()
+        {
+            ExecutionProviders.Clear();
+
+            var eps = ExecutionLogic.LoadExecutionProviders();
+
+            foreach (var ep in eps)
+            {
+                ExecutionProviders.Add(ep);
+            }
+
+            WriteToConsole("Loaded execution providers.");
         }
 
         private void ExecutionProvidersGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -97,46 +101,10 @@ namespace WinMLLabDemo
 
             CompileModelButton.IsEnabled = true;
 
-            string compiledModelPath = GetCompiledModelPath(selectedExecutionProvider!);
+            string compiledModelPath = ModelHelpers.GetCompiledModelPath(selectedExecutionProvider!);
             LoadModelButton.IsEnabled = File.Exists(compiledModelPath);
 
             RunButton.IsEnabled = _loadedSession != null;
-        }
-
-        private string GetCompiledModelPath(OrtEpDevice ep)
-        {
-            if (ep == null)
-            {
-                return "";
-            }
-
-            string baseDirectory = AppDomain.CurrentDomain.BaseDirectory;
-
-            // CPU and DML don't need to be compiled
-            switch (ep.EpName)
-            {
-                case "CPUExecutionProvider":
-                case "DmlExecutionProvider":
-                    return IOPath.Combine(baseDirectory, $"{ModelName}{ModelExtension}");
-            }
-
-            string compiledModelName = $"{ep.EpName}.{ModelName}{ModelExtension}";
-            return IOPath.Combine(baseDirectory, compiledModelName);
-        }
-
-        private void LoadExecutionProviders()
-        {
-            // Add some default/sample execution providers
-            ExecutionProviders.Clear();
-
-            var eps = _ortEnv.GetEpDevices();
-
-            foreach (var ep in eps)
-            {
-                ExecutionProviders.Add(ep);
-            }
-
-            WriteToConsole("Loaded execution providers.");
         }
 
         private void RefreshEPButton_Click(object sender, RoutedEventArgs e)
@@ -157,9 +125,8 @@ namespace WinMLLabDemo
                 WriteToConsole("WinML: Downloading and registering EPs...");
                 var now = DateTime.Now;
 
-                // TODO: Download and register the Execution Providers for our device
-                var catalog = ExecutionProviderCatalog.GetDefault();
-                var registeredProviders = await catalog.EnsureAndRegisterAllAsync();
+                // Download and register the Execution Providers for our device
+                await ExecutionLogic.InitializeWinMLEPsAsync();
 
                 var elapsed = DateTime.Now - now;
                 WriteToConsole($"WinML: EPs downloaded and registered in {elapsed.TotalMilliseconds} ms.");
@@ -197,7 +164,7 @@ namespace WinMLLabDemo
                 WriteToConsole($"Compiling model for {selectedExecutionProvider.EpName}...");
                 var now = DateTime.Now;
 
-                string compiledModelPath = await Task.Run(() => CompileModelForExecutionProvider(selectedExecutionProvider));
+                string compiledModelPath = await Task.Run(() => ExecutionLogic.CompileModelForExecutionProvider(selectedExecutionProvider));
 
                 var elapsed = DateTime.Now - now;
                 WriteToConsole($"Model compiled successfully in {elapsed.TotalMilliseconds} ms: {compiledModelPath}");
@@ -215,69 +182,7 @@ namespace WinMLLabDemo
             }
         }
 
-        private SessionOptions GetSessionOptions(OrtEpDevice executionProvider)
-        {
-            // Create a session
-            var sessionOptions = new SessionOptions();
-
-            Dictionary<string, string> epOptions = new(StringComparer.OrdinalIgnoreCase);
-
-            switch (executionProvider.EpName)
-            {
-                case "VitisAIExecutionProvider":
-                    sessionOptions.AppendExecutionProvider(_ortEnv, [executionProvider], epOptions);
-                    break;
-
-                case "OpenVINOExecutionProvider":
-                    // Configure threading for OpenVINO EP
-                    epOptions["num_of_threads"] = "4";
-                    sessionOptions.AppendExecutionProvider(_ortEnv, [executionProvider], epOptions);
-                    break;
-
-                case "QNNExecutionProvider":
-                    // Configure performance mode for QNN EP
-                    epOptions["htp_performance_mode"] = "high_performance";
-                    sessionOptions.AppendExecutionProvider(_ortEnv, [executionProvider], epOptions);
-                    break;
-
-                case "NvTensorRTRTXExecutionProvider":
-                    // Configure performance mode for TensorRT RTX EP
-                    sessionOptions.AppendExecutionProvider(_ortEnv, [executionProvider], epOptions);
-                    break;
-
-                default:
-                    break;
-            }
-
-            return sessionOptions;
-        }
-
-        private string CompileModelForExecutionProvider(OrtEpDevice executionProvider)
-        {
-            string baseModelPath = IOPath.Combine(AppDomain.CurrentDomain.BaseDirectory, $"{ModelName}{ModelExtension}");
-            string compiledModelPath = GetCompiledModelPath(executionProvider);
-
-            try
-            {
-                var sessionOptions = GetSessionOptions(executionProvider);
-
-                // Create compilation options from session options
-                OrtModelCompilationOptions compileOptions = new(sessionOptions);
-
-                // Set input and output model paths
-                compileOptions.SetInputModelPath(baseModelPath);
-                compileOptions.SetOutputModelPath(compiledModelPath);
-
-                // Compile the model
-                compileOptions.CompileModel();
-            }
-            catch
-            {
-                throw new Exception($"Failed to create session with execution provider: {executionProvider.EpName}");
-            }
-            
-            return compiledModelPath;
-        }
+        
 
         private void BrowseImageButton_Click(object sender, RoutedEventArgs e)
         {
@@ -331,7 +236,7 @@ namespace WinMLLabDemo
                 return;
             }
 
-            string compiledModelPath = GetCompiledModelPath(selectedExecutionProvider);
+            string compiledModelPath = ModelHelpers.GetCompiledModelPath(selectedExecutionProvider);
             if (!File.Exists(compiledModelPath))
             {
                 WriteToConsole("Compiled model not found. Please compile the model first.");
@@ -351,7 +256,7 @@ namespace WinMLLabDemo
             {
                 ResultsTextBlock.Text = "Running classification ...";
                 DateTime start = DateTime.Now;
-                var results = await Task.Run(() => RunModelAsync(selectedImagePath, compiledModelPath, selectedExecutionProvider));
+                var results = await Task.Run(() => ExecutionLogic.RunModelAsync(_loadedSession, selectedImagePath, compiledModelPath, selectedExecutionProvider));
                 ResultsTextBlock.Text = results;
                 var time = DateTime.Now - start;
                 WriteToConsole($"Classification completed successfully in {time.TotalMilliseconds} ms.");
@@ -368,28 +273,6 @@ namespace WinMLLabDemo
                 LoadModelButton.IsEnabled = true;
                 RunButton.IsEnabled = true;
             }
-        }
-
-        private InferenceSession? _loadedSession;
-
-        private async Task<InferenceSession> LoadModel(string compiledModelPath, OrtEpDevice executionProvider)
-        {
-            var sessionOptions = GetSessionOptions(executionProvider);
-            return new InferenceSession(compiledModelPath, sessionOptions);
-        }
-
-        private async Task<string> RunModelAsync(string imagePath, string compiledModelPath, OrtEpDevice executionProvider)
-        {
-            var session = _loadedSession;
-
-            Console.WriteLine("Preparing input ...");
-            var inputs = await ModelHelpers.BindInputs(imagePath, session);
-
-            Console.WriteLine("Running inference ...");
-            using var results = session.Run(inputs);
-
-            // Format the results
-            return ModelHelpers.FormatResults(results, session);
         }
 
         private void ClearConsoleButton_Click(object sender, RoutedEventArgs e)
@@ -422,7 +305,7 @@ namespace WinMLLabDemo
                 return;
             }
 
-            var path = GetCompiledModelPath(selectedExecutionProvider);
+            var path = ModelHelpers.GetCompiledModelPath(selectedExecutionProvider);
             if (!File.Exists(path))
             {
                 WriteToConsole($"Compiled model not found: {path}");
@@ -433,7 +316,7 @@ namespace WinMLLabDemo
             {
                 WriteToConsole($"Loading model for execution provider: {selectedExecutionProvider.EpName}");
                 DateTime start = DateTime.Now;
-                _loadedSession = await Task.Run(() => LoadModel(GetCompiledModelPath(selectedExecutionProvider), selectedExecutionProvider));
+                _loadedSession = await Task.Run(() => ExecutionLogic.LoadModel(ModelHelpers.GetCompiledModelPath(selectedExecutionProvider), selectedExecutionProvider));
                 var elapsed = DateTime.Now - start;
                 WriteToConsole($"Model loaded successfully in {elapsed.TotalMilliseconds} ms.");
                 RunButton.IsEnabled = true;
