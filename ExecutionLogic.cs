@@ -36,11 +36,7 @@ namespace WinMLLabDemo
 
         public static async Task InitializeWinMLEPsAsync()
         {
-            // Get the WinML EP catalog
-            var catalog = ExecutionProviderCatalog.GetDefault();
-
-            // Download and register all EPs
-            await catalog.EnsureAndRegisterAllAsync();
+            // TODO: Get the WinML EP catalog and download all EPs
         }
 
         public static string CompileModelForExecutionProvider(OrtEpDevice executionProvider)
@@ -52,15 +48,7 @@ namespace WinMLLabDemo
             {
                 var sessionOptions = GetSessionOptions(executionProvider);
 
-                // Create compilation options from session options
-                OrtModelCompilationOptions compileOptions = new(sessionOptions);
-
-                // Set input and output model paths
-                compileOptions.SetInputModelPath(baseModelPath);
-                compileOptions.SetOutputModelPath(compiledModelPath);
-
-                // Compile the model
-                compileOptions.CompileModel();
+                // TODO: Create compilation options, set the input and output, and compile
             }
             catch
             {
@@ -73,7 +61,9 @@ namespace WinMLLabDemo
         public static InferenceSession LoadModel(string compiledModelPath, OrtEpDevice executionProvider)
         {
             var sessionOptions = GetSessionOptions(executionProvider);
-            return new InferenceSession(compiledModelPath, sessionOptions);
+
+            // TODO: Return an inference session
+            throw new NotImplementedException();
         }
 
         public static async Task<string> RunModelAsync(InferenceSession session, string imagePath, string compiledModelPath, OrtEpDevice executionProvider)
@@ -81,11 +71,8 @@ namespace WinMLLabDemo
             // Prepare inputs
             var inputs = await ModelHelpers.BindInputs(imagePath, session);
 
-            // Run inference
-            using var results = session.Run(inputs);
-
-            // Format the results
-            return ModelHelpers.FormatResults(results, session);
+            // TODO: Run the inference, format and return the results
+            throw new NotImplementedException();
         }
 
         private static SessionOptions GetSessionOptions(OrtEpDevice executionProvider)
